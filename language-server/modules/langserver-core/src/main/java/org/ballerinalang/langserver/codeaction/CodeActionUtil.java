@@ -30,6 +30,7 @@ import io.ballerina.compiler.api.symbols.TypeDefinitionSymbol;
 import io.ballerina.compiler.api.symbols.TypeDescKind;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.api.symbols.UnionTypeSymbol;
+import io.ballerina.compiler.syntax.tree.AnnotationDeclarationNode;
 import io.ballerina.compiler.syntax.tree.AssignmentStatementNode;
 import io.ballerina.compiler.syntax.tree.ClassDefinitionNode;
 import io.ballerina.compiler.syntax.tree.ExpressionStatementNode;
@@ -41,6 +42,7 @@ import io.ballerina.compiler.syntax.tree.MethodDeclarationNode;
 import io.ballerina.compiler.syntax.tree.ModuleVariableDeclarationNode;
 import io.ballerina.compiler.syntax.tree.Node;
 import io.ballerina.compiler.syntax.tree.NonTerminalNode;
+import io.ballerina.compiler.syntax.tree.ObjectFieldNode;
 import io.ballerina.compiler.syntax.tree.ObjectTypeDescriptorNode;
 import io.ballerina.compiler.syntax.tree.RecordTypeDescriptorNode;
 import io.ballerina.compiler.syntax.tree.ReturnTypeDescriptorNode;
@@ -53,7 +55,6 @@ import io.ballerina.projects.Document;
 import io.ballerina.projects.util.ProjectConstants;
 import io.ballerina.tools.diagnostics.Diagnostic;
 import io.ballerina.tools.diagnostics.DiagnosticProperty;
-import io.ballerina.tools.diagnostics.DiagnosticPropertyKind;
 import io.ballerina.tools.diagnostics.Location;
 import io.ballerina.tools.text.LinePosition;
 import io.ballerina.tools.text.LineRange;
@@ -64,9 +65,11 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.ballerinalang.langserver.common.ImportsAcceptor;
 import org.ballerinalang.langserver.common.utils.CommonUtil;
 import org.ballerinalang.langserver.common.utils.FunctionGenerator;
+import org.ballerinalang.langserver.common.utils.PositionUtil;
 import org.ballerinalang.langserver.commons.CodeActionContext;
 import org.ballerinalang.langserver.commons.codeaction.CodeActionNodeType;
 import org.ballerinalang.langserver.commons.codeaction.spi.DiagBasedPositionDetails;
+import org.ballerinalang.langserver.commons.codeaction.spi.NodeBasedPositionDetails;
 import org.eclipse.lsp4j.DiagnosticSeverity;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.Range;
@@ -75,6 +78,7 @@ import org.eclipse.lsp4j.TextEdit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -119,6 +123,8 @@ public class CodeActionUtil {
                 return CodeActionNodeType.NONE;
             case METHOD_DECLARATION:
                 return CodeActionNodeType.OBJECT_FUNCTION;
+            case OBJECT_FIELD:
+                return CodeActionNodeType.OBJECT_FIELD;
             case CLASS_DEFINITION:
                 return CodeActionNodeType.CLASS;
             case OBJECT_METHOD_DEFINITION:
@@ -133,6 +139,8 @@ public class CodeActionUtil {
                 return CodeActionNodeType.ASSIGNMENT;
             case RECORD_TYPE_DESC:
                 return CodeActionNodeType.RECORD;
+            case ANNOTATION_DECLARATION:
+                return CodeActionNodeType.ANNOTATION;
             default:
                 return CodeActionNodeType.NONE;
         }
@@ -370,7 +378,7 @@ public class CodeActionUtil {
     public static DiagBasedPositionDetails computePositionDetails(SyntaxTree syntaxTree, Diagnostic diagnostic,
                                                                   CodeActionContext context) {
         // Find Cursor node
-        Range range = CommonUtil.toRange(diagnostic.location().lineRange());
+        Range range = PositionUtil.toRange(diagnostic.location().lineRange());
         NonTerminalNode cursorNode = CommonUtil.findNode(range, syntaxTree);
         Document srcFile = context.currentDocument().orElseThrow();
         SemanticModel semanticModel = context.currentSemanticModel().orElseThrow();
@@ -450,6 +458,20 @@ public class CodeActionUtil {
         return edits;
     }
 
+    public static List<TextEdit> addGettersCodeActionEdits(String varName, Range range, String spaces,
+                                                           String typeName) {
+        List<TextEdit> edits = new ArrayList<>();
+        edits.add(new TextEdit(range, generateGetterFunctionBodyText(varName, typeName, spaces)));
+        return edits;
+    }
+
+    public static List<TextEdit> addSettersCodeActionEdits(String varName, Range range, String spaces,
+                                                           String typeName) {
+        List<TextEdit> edits = new ArrayList<>();
+        edits.add(new TextEdit(range, generateSetterFunctionBodyText(varName, typeName, spaces)));
+        return edits;
+    }
+
     public static List<TextEdit> getAddCheckTextEdits(Position pos, NonTerminalNode matchedNode,
                                                       CodeActionContext context) {
         List<TextEdit> edits = new ArrayList<>();
@@ -489,19 +511,19 @@ public class CodeActionUtil {
                                     CodeActionUtil.getPossibleType(parentUnionRetTypeDesc, edits, context)
                                             .orElseThrow();
                             returnText = "returns " + typeName + "|error";
-                            returnRange = CommonUtil.toRange(enclosedRetTypeDescNode.lineRange());
+                            returnRange = PositionUtil.toRange(enclosedRetTypeDescNode.lineRange());
                         }
                     } else {
                         // Parent function already has another return-type
                         String typeName =
                                 CodeActionUtil.getPossibleType(enclosedRetTypeDesc, edits, context).orElseThrow();
                         returnText = "returns " + typeName + "|error";
-                        returnRange = CommonUtil.toRange(enclosedRetTypeDescNode.lineRange());
+                        returnRange = PositionUtil.toRange(enclosedRetTypeDescNode.lineRange());
                     }
                 } else {
                     // Parent function has no return
                     returnText = " returns error?";
-                    Position position = CommonUtil.toPosition(
+                    Position position = PositionUtil.toPosition(
                             enclosedFunc.get().functionSignature().closeParenToken().lineRange().endLine());
                     returnRange = new Range(position, position);
                 }
@@ -529,8 +551,8 @@ public class CodeActionUtil {
     public static Node largestExpressionNode(Node node, Range range) {
         Predicate<Node> isWithinScope =
                 tNode -> tNode != null && !(tNode instanceof ExpressionStatementNode) &&
-                        CommonUtil.isWithinRange(CommonUtil.toPosition(tNode.lineRange().startLine()), range) &&
-                        CommonUtil.isWithinRange(CommonUtil.toPosition(tNode.lineRange().endLine()), range);
+                        PositionUtil.isWithinRange(PositionUtil.toPosition(tNode.lineRange().startLine()), range) &&
+                        PositionUtil.isWithinRange(PositionUtil.toPosition(tNode.lineRange().endLine()), range);
         while (isWithinScope.test(node.parent())) {
             node = node.parent();
         }
@@ -552,12 +574,27 @@ public class CodeActionUtil {
      * @return {@link String}   Top level node
      */
     public static Optional<NonTerminalNode> getTopLevelNode(Position cursorPos, SyntaxTree syntaxTree) {
+        return getCodeActionNode(cursorPos, syntaxTree);
+    }
+
+    /**
+     * Get the code action node type at the cursor line.
+     *
+     * @param cursorPos  {@link Position}
+     * @param syntaxTree {@link SyntaxTree}
+     * @return {@link String}   Top level node
+     */
+    public static Optional<NonTerminalNode> getCodeActionNode(Position cursorPos, SyntaxTree syntaxTree) {
         NonTerminalNode member = CommonUtil.findNode(new Range(cursorPos, cursorPos), syntaxTree);
         LinePosition cursorPosition = LinePosition.from(cursorPos.getLine(), cursorPos.getCharacter());
         int cursorPosOffset = syntaxTree.textDocument().textPositionFrom(cursorPosition);
         while (member != null) {
             boolean isWithinStartSegment = isWithinStartCodeSegment(member, cursorPosOffset);
             boolean isWithinBody = isWithinBody(member, cursorPosOffset);
+            if (member.kind() == SyntaxKind.OBJECT_FIELD) {
+                return Optional.of(member);
+            }
+
             if (!isWithinStartSegment && !isWithinBody) {
                 member = member.parent();
                 continue;
@@ -597,7 +634,7 @@ public class CodeActionUtil {
                     // A record type descriptor can be inside a type definition node
                     NonTerminalNode parent = member.parent();
                     if (parent != null && parent.kind() == SyntaxKind.TYPE_DEFINITION &&
-                            (isWithinStartCodeSegment(parent, cursorPosOffset) || 
+                            (isWithinStartCodeSegment(parent, cursorPosOffset) ||
                                     isWithinBody(parent, cursorPosOffset))) {
                         return Optional.of(parent);
                     }
@@ -624,6 +661,8 @@ public class CodeActionUtil {
                     return Optional.of(member);
                 }
             } else if (member.kind() == SyntaxKind.OBJECT_METHOD_DEFINITION && isWithinStartSegment) {
+                return Optional.of(member);
+            } else if (member.kind() == SyntaxKind.ANNOTATION_DECLARATION && isWithinStartSegment) {
                 return Optional.of(member);
             } else if (isWithinBody && member.kind() == SyntaxKind.IMPORT_DECLARATION) {
                 return Optional.of(member);
@@ -699,6 +738,11 @@ public class CodeActionUtil {
                 return isWithinRange(positionOffset,
                         markdownDocumentationNode.textRange().startOffset(),
                         markdownDocumentationNode.textRange().endOffset());
+            case ANNOTATION_DECLARATION:
+                AnnotationDeclarationNode annotationDeclarationNode = (AnnotationDeclarationNode) node;
+                return isWithinRange(positionOffset,
+                        annotationDeclarationNode.textRange().startOffset(),
+                        annotationDeclarationNode.semicolonToken().textRange().startOffset());
             default:
                 return false;
         }
@@ -762,6 +806,13 @@ public class CodeActionUtil {
                 RecordTypeDescriptorNode recordTypeDescriptorNode = (RecordTypeDescriptorNode) node;
                 int startOffset = recordTypeDescriptorNode.bodyStartDelimiter().textRange().startOffset();
                 return isWithinRange(positionOffset, recordTypeDescriptorNode.textRange().startOffset(), startOffset);
+            case ANNOTATION_DECLARATION:
+                AnnotationDeclarationNode annotationDeclarationNode = (AnnotationDeclarationNode) node;
+                Optional<MetadataNode> annotationMetadata = annotationDeclarationNode.metadata();
+                int annotationStartOffset = annotationMetadata.map(metadataNode -> metadataNode.textRange().endOffset())
+                        .orElseGet(() -> annotationDeclarationNode.textRange().startOffset() - 1);
+                return isWithinRange(positionOffset, annotationStartOffset,
+                        annotationDeclarationNode.annotationTag().textRange().endOffset());
             case IMPORT_DECLARATION:
             case LOCAL_VAR_DECL:
             case MODULE_VAR_DECL:
@@ -874,6 +925,119 @@ public class CodeActionUtil {
         return LINE_SEPARATOR + newTextBuilder.toString();
     }
 
+    private static String generateGetterFunctionBodyText(String varName, String typeName, String spaces) {
+        StringBuilder newTextBuilder = new StringBuilder();
+        String functionName = varName.substring(0, 1).toUpperCase(Locale.ROOT) + varName.substring(1);
+        newTextBuilder.append(LINE_SEPARATOR).append(LINE_SEPARATOR).append(spaces)
+                .append(String.format("public function get%s() returns %s{ ", functionName, typeName))
+                .append(LINE_SEPARATOR).append(spaces).append(spaces)
+                .append(String.format("return self.%s;", varName))
+                .append(LINE_SEPARATOR).append(spaces).append("}");
+        return newTextBuilder.toString();
+    }
+
+    private static String generateSetterFunctionBodyText(String varName, String typeName, String spaces) {
+
+        StringBuilder newTextBuilder = new StringBuilder();
+        String functionName = varName.substring(0, 1).toUpperCase(Locale.ROOT) + varName.substring(1);
+        newTextBuilder.append(LINE_SEPARATOR).append(LINE_SEPARATOR).append(spaces)
+                .append(String.format("public function set%s(%s %s) { ", functionName, typeName, varName))
+                .append(LINE_SEPARATOR).append(spaces).append(spaces)
+                .append(String.format("self.%s = %s;", varName, varName))
+                .append(LINE_SEPARATOR).append(spaces).append("}");
+        return newTextBuilder.toString();
+    }
+
+    public static boolean isWithinVarName(CodeActionContext context, ObjectFieldNode objectFieldNode) {
+        return objectFieldNode.fieldName().lineRange().startLine().offset() <= context.cursorPosition().getCharacter()
+                && context.cursorPosition().getCharacter() <=
+                objectFieldNode.fieldName().lineRange().endLine().offset();
+    }
+
+    public static List<TextEdit> getGetterSetterCodeEdits(ObjectFieldNode objectFieldNode,
+                                                          Optional<FunctionDefinitionNode> initNode,
+                                                          String fieldName,
+                                                          String typeName,
+                                                          String name) {
+        int startLine;
+        int startOffset;
+        int textOffset;
+        if (initNode.isEmpty()) {
+            LinePosition linePosition =  ((ClassDefinitionNode) objectFieldNode.parent()).
+                    members().get(((ClassDefinitionNode) objectFieldNode.parent()).members().size() - 1).
+                    lineRange().endLine();
+            startLine = linePosition.line();
+            startOffset = linePosition.offset();
+            textOffset = objectFieldNode.lineRange().startLine().offset();
+        } else {
+            LineRange lineRange = initNode.get().lineRange();
+            startLine = lineRange.endLine().line();
+            startOffset = lineRange.endLine().offset();
+            textOffset = lineRange.startLine().offset();
+        }
+
+        Position startPos = new Position(startLine, startOffset);
+        Range newTextRange = new Range(startPos, startPos);
+        String spaces = StringUtils.repeat(' ', textOffset);
+        if (name.equals("Getter")) {
+            return CodeActionUtil.addGettersCodeActionEdits(fieldName, newTextRange, spaces, typeName);
+        } else if (name.equals("Setter")) {
+            return CodeActionUtil.addSettersCodeActionEdits(fieldName, newTextRange, spaces, typeName);
+        } else {
+            List<TextEdit> edits = CodeActionUtil.addGettersCodeActionEdits(fieldName, newTextRange, spaces, typeName);
+            edits.addAll((CodeActionUtil.addSettersCodeActionEdits(fieldName, newTextRange, spaces, typeName)));
+            return edits;
+        }
+    }
+
+    public static Optional<FunctionDefinitionNode> getInitNode(ObjectFieldNode objectFieldNode) {
+        FunctionDefinitionNode initNode = null;
+
+        for (Node node : ((ClassDefinitionNode) objectFieldNode.parent()).members()) {
+            if (node.kind() == SyntaxKind.OBJECT_METHOD_DEFINITION) {
+                if (((FunctionDefinitionNode) node).functionName().toString().equals("init")) {
+                    initNode = (FunctionDefinitionNode) node;
+                }
+
+            }
+        }
+
+        return Optional.ofNullable(initNode);
+    }
+
+    public static boolean isFunctionDefined(String functionName, ObjectFieldNode objectFieldNode) {
+        for (Node node: ((ClassDefinitionNode) objectFieldNode.parent()).members()) {
+            if (node.kind() == SyntaxKind.OBJECT_METHOD_DEFINITION) {
+                if (((FunctionDefinitionNode) node).functionName().toString().equals(functionName)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    public static Optional<ObjectFieldNode> getObjectFieldNode(CodeActionContext context,
+                                                        NodeBasedPositionDetails posDetails) {
+        NonTerminalNode matchedNode = posDetails.matchedCodeActionNode();
+        if (!(matchedNode.kind() == SyntaxKind.OBJECT_FIELD) || matchedNode.hasDiagnostics()) {
+            return Optional.empty();
+        }
+
+        ObjectFieldNode objectFieldNode = (ObjectFieldNode) matchedNode;
+        if (!CodeActionUtil.isWithinVarName(context, objectFieldNode)) {
+            return Optional.empty();
+        }
+
+        return Optional.of(objectFieldNode);
+    }
+
+    public static boolean isImmutableObjectField(ObjectFieldNode objectFieldNode) {
+        return  objectFieldNode.qualifierList().stream()
+                .anyMatch(qualifiers -> qualifiers.toString().strip().equals("final") ||
+                        qualifiers.toString().strip().equals("readonly"));
+    }
+
     /**
      * Get the filter function used for filter diagnostic property values.
      *
@@ -882,14 +1046,10 @@ public class CodeActionUtil {
     public static <T> Function<List<DiagnosticProperty<?>>,
             Optional<T>> getDiagPropertyFilterFunction(int propertyIndex) {
         Function<List<DiagnosticProperty<?>>, Optional<T>> filterFunction = diagnosticProperties -> {
-
-            List<DiagnosticProperty<?>> props = diagnosticProperties.stream()
-                    .filter(diagnosticProperty -> diagnosticProperty.kind() == DiagnosticPropertyKind.SYMBOLIC)
-                    .collect(Collectors.toList());
-            if (props.size() < (propertyIndex + 1)) {
+            if (diagnosticProperties.size() < (propertyIndex + 1)) {
                 return Optional.empty();
             }
-            DiagnosticProperty<?> diagnosticProperty = props.get(propertyIndex);
+            DiagnosticProperty<?> diagnosticProperty = diagnosticProperties.get(propertyIndex);
             // Nullable static API used for safety
             return Optional.ofNullable((T) diagnosticProperty.value());
         };

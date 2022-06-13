@@ -1017,6 +1017,10 @@ public class SymbolResolver extends BLangNodeTransformer<SymbolResolver.Analyzer
             }
             BUnionType type = (BUnionType) Types.getReferredType(entry.symbol.type);
             symTable.anydataType = new BAnydataType(type);
+            Optional<BIntersectionType> immutableType = Types.getImmutableType(symTable, PackageID.ANNOTATIONS, type);
+            if (immutableType.isPresent()) {
+                Types.addImmutableType(symTable, PackageID.ANNOTATIONS, symTable.anydataType, immutableType.get());
+            }
             symTable.anydataOrReadonly = BUnionType.create(null, symTable.anydataType, symTable.readonlyType);
             entry.symbol.type = symTable.anydataType;
             entry.symbol.origin = BUILTIN;
@@ -1037,6 +1041,11 @@ public class SymbolResolver extends BLangNodeTransformer<SymbolResolver.Analyzer
             }
             BUnionType type = (BUnionType) Types.getReferredType(entry.symbol.type);
             symTable.jsonType = new BJSONType(type);
+            Optional<BIntersectionType> immutableType = Types.getImmutableType(symTable, PackageID.ANNOTATIONS,
+                                                                               type);
+            if (immutableType.isPresent()) {
+                Types.addImmutableType(symTable, PackageID.ANNOTATIONS, symTable.jsonType, immutableType.get());
+            }
             symTable.jsonType.tsymbol = new BTypeSymbol(SymTag.TYPE, Flags.PUBLIC, Names.JSON, PackageID.ANNOTATIONS,
                     symTable.jsonType, symTable.langAnnotationModuleSymbol, symTable.builtinPos, BUILTIN);
             entry.symbol.type = symTable.jsonType;
@@ -1917,15 +1926,16 @@ public class SymbolResolver extends BLangNodeTransformer<SymbolResolver.Analyzer
         switch (opKind) {
             case ADD:
                 validNumericOrStringTypeExists = (types.validNumericTypeExists(lhsType) &&
-                        types.validNumericTypeExists(rhsType)) || (types.validStringOrXmlTypeExists(lhsType) &&
-                        types.validStringOrXmlTypeExists(rhsType));
+                                                  types.validNumericTypeExists(rhsType)) ||
+                                                 (types.validStringOrXmlTypeExists(lhsType) &&
+                                                  types.validStringOrXmlTypeExists(rhsType));
                 break;
             case SUB:
             case DIV:
             case MUL:
             case MOD:
                 validNumericOrStringTypeExists = types.validNumericTypeExists(lhsType) &&
-                        types.validNumericTypeExists(rhsType);
+                                                 types.validNumericTypeExists(rhsType);
                 break;
             default:
                 return symTable.notFoundSymbol;
@@ -1946,23 +1956,37 @@ public class SymbolResolver extends BLangNodeTransformer<SymbolResolver.Analyzer
                 compatibleType2 = types.findCompatibleType(rhsType);
             }
 
-            if (types.isBasicNumericType(compatibleType1) && compatibleType1 != compatibleType2) {
+            if (compatibleType1 != compatibleType2 && types.isBasicNumericType(compatibleType1) && 
+                    !isIntFloatingPointMultiplication(opKind, compatibleType1, compatibleType2)) {
                 return symTable.notFoundSymbol;
             }
-            if (compatibleType1.tag < compatibleType2.tag) {
-                return createBinaryOperator(opKind, lhsType, rhsType, compatibleType2);
+
+            BType returnType = compatibleType1.tag < compatibleType2.tag ? compatibleType2 : compatibleType1;
+            if (lhsType.isNullable() || rhsType.isNullable()) {
+                returnType = BUnionType.create(null, returnType, symTable.nilType);
             }
-            if (lhsType.isNullable()) {
-                compatibleType1 = BUnionType.create(null, compatibleType1, symTable.nilType);
-                return createBinaryOperator(opKind, lhsType, rhsType, compatibleType1);
-            }
-            if (rhsType.isNullable()) {
-                compatibleType2 = BUnionType.create(null, compatibleType2, symTable.nilType);
-                return createBinaryOperator(opKind, lhsType, rhsType, compatibleType2);
-            }
-            return createBinaryOperator(opKind, lhsType, rhsType, compatibleType1);
+
+            return createBinaryOperator(opKind, lhsType, rhsType, returnType);
         }
         return symTable.notFoundSymbol;
+    }
+    
+    private boolean isIntFloatingPointMultiplication(OperatorKind opKind, BType lhsCompatibleType, 
+                                                     BType rhsCompatibleType) {
+        switch (opKind) {
+            case MUL:
+                return lhsCompatibleType.tag == TypeTags.INT && isFloatingPointType(rhsCompatibleType) ||
+                        rhsCompatibleType.tag == TypeTags.INT && isFloatingPointType(lhsCompatibleType);
+            case DIV:
+            case MOD:
+                return isFloatingPointType(lhsCompatibleType) && rhsCompatibleType.tag == TypeTags.INT;
+            default:
+                return false;
+        }
+    }
+    
+    private boolean isFloatingPointType(BType type) {
+        return type.tag == TypeTags.DECIMAL || type.tag == TypeTags.FLOAT;
     }
 
     public BSymbol getUnaryOpsForTypeSets(OperatorKind opKind, BType type) {
@@ -2343,8 +2367,9 @@ public class SymbolResolver extends BLangNodeTransformer<SymbolResolver.Analyzer
             return potentialIntersectionType;
         }
 
-        if (!types.isSelectivelyImmutableType(potentialIntersectionType, false)) {
-            if (types.isSelectivelyImmutableType(potentialIntersectionType)) {
+        PackageID packageID = data.env.enclPkg.packageID;
+        if (!types.isSelectivelyImmutableType(potentialIntersectionType, false, packageID)) {
+            if (types.isSelectivelyImmutableType(potentialIntersectionType, packageID)) {
                 // This intersection would have been valid if not for `readonly object`s.
                 dlog.error(intersectionTypeNode.pos, DiagnosticErrorCode.INVALID_READONLY_OBJECT_INTERSECTION_TYPE);
             } else {
