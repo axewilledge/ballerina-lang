@@ -434,46 +434,12 @@ function testAssigningKeyedToEmptyKeyedTbl() {
     tbl2[222] = {id: 222, firstName: "Melina", lastName: "Kodel"};
 }
 
-type Person1 record {
+type Student record {|
     readonly int id;
-    string name;
-};
+    string firstName;
+|};
 
-function testMultipleKeys1() {
-    table<Person1> key(id) t1 = table [
-        {id: 1, name: "a"},
-        {id: 2, name: "a"}
-    ];
-
-    Person1? _ = t1[1, 2, 3]; // error
-}
-
-type Person2 record {
-    readonly int id;
-    readonly string name;
-};
-
-function testMultipleKeys2() {
-    table<Person2> key(id) t1 = table [
-        {id: 1, name: "a"},
-        {id: 2, name: "a"}
-    ];
-
-    Person2? _ = t1[1, "2", "3"]; // error
-
-    table<Person2> key(id) t2 = table [
-        {id: 1, name: "a"},
-        {id: 2, name: "a"}
-    ];
-
-    Person2? _ = t2[11, 12, 13, 14]; // error
-}
-
-function testMultipleKeys3() {
-    table<Person1> key <int> t1 = table key(id) [
-        {id: 1, name: "a"},
-        {id: 2, name: "a"}
-    ];
-
-    Person1? _ = t1[1, 2, 3]; // error
+function testIncompatibleTableTypeInAUnion() {
+    string lastName = "Jayawickrama";
+    table<Student>|int t = table key(id) [{id: 1, firstName: "Lochana", lastName}];
 }

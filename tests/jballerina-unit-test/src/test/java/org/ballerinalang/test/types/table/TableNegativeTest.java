@@ -151,11 +151,9 @@ public class TableNegativeTest {
                         "found 'CustomerEmptyKeyedTbl'", 424, 23);
         validateError(compileResult, index++, "member access is not supported for keyless table 'tbl2'", 433, 9);
         validateError(compileResult, index++, "cannot update 'table<Customer>' with member access expression", 434, 5);
-        validateError(compileResult, index++, "incompatible types: expected 'int', found '[int,int,int]'", 448, 21);
-        validateError(compileResult, index++, "incompatible types: expected 'int', found '[int,string,string]'",
-                462, 21);
-        validateError(compileResult, index++, "incompatible types: expected 'int', found '[int,int,int,int]'", 469, 21);
-        validateError(compileResult, index, "incompatible types: expected 'int', found '[int,int,int]'", 478, 21);
+        validateError(compileResult, index++, "incompatible types: expected '(table<Student>|int)', " +
+                "found 'table<record {| readonly int id; string firstName; string lastName; |}>'", 444, 28);
+        Assert.assertEquals(compileResult.getErrorCount(), index);
     }
 
     @Test

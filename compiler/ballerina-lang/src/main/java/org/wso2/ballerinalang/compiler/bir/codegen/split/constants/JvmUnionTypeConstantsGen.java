@@ -89,6 +89,17 @@ public class JvmUnionTypeConstantsGen {
         return unionTypeVarMap.computeIfAbsent(type, str -> generateBUnionInits(type, symbolTable));
     }
 
+    private void generateUnionTypeConstantsClassInit() {
+        cw = new BallerinaClassWriter(COMPUTE_FRAMES);
+        cw.visit(V1_8, ACC_PUBLIC | ACC_SUPER, unionVarConstantsClass, null, OBJECT, null);
+
+        MethodVisitor methodVisitor = cw.visitMethod(ACC_PRIVATE, JVM_INIT_METHOD, "()V", null, null);
+        methodVisitor.visitCode();
+        methodVisitor.visitVarInsn(ALOAD, 0);
+        methodVisitor.visitMethodInsn(INVOKESPECIAL, OBJECT, JVM_INIT_METHOD, "()V", false);
+        genMethodReturn(methodVisitor);
+    }
+
     private void visitUnionTypeInitMethod() {
         mv = cw.visitMethod(ACC_STATIC, B_UNION_TYPE_INIT_METHOD_PREFIX + methodCount++,
                             "()V", null, null);
